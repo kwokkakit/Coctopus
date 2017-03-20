@@ -88,8 +88,8 @@ class DBHandler:
             else:
                 return False
             try:
-                print sql_query
-                print list(values.itervalues())
+                # print sql_query
+                # print list(values.itervalues())
                 self._cur.execute("SET NAMES 'utf8'")
                 self._cur.execute(sql_query, list(values.itervalues()))
                 self._conn.commit()

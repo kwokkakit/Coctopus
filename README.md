@@ -15,3 +15,6 @@ The guy is so lazy that he left nothing.
 
 ## V 0.3.1
 添加SQL文件
+
+## V 0.4.0
+更新多线程库及更新多线程爬虫实现方式

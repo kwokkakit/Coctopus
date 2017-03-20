@@ -9,6 +9,7 @@ import logging
 
 import db, common
 
+
 class YouXin():
     def __init__(self):
         # 使用PhantomJS获取渲染后页面
@@ -18,14 +19,11 @@ class YouXin():
         self.BASE_URL = "http://www.xin.com"
 
         # 初始化数据库连接
-        self.db = db.DBHandler(
+        self.conn = db.DBHandler(
             {'host': 'localhost', 'port': 3306, 'user': 'root', 'passwd': '', 'db': 'youxin', 'charset': 'utf8'})
 
-        # 初始化基础工具
-        self.tools = common.BaseFunction()
-
-        # 初始化多线程
-        self.NUM_OF_THREADS = 40
+        # 初始化工具
+        self.tools = common.Tools()
 
     def getLocation(self, locatoin_page):
         try:
@@ -54,13 +52,13 @@ class YouXin():
         for i in range(len(location_id)):
             data = dict()
             data.update(city_id=location_id[i])
-            result = self.db.isInRecord('cityinfo', data)
+            result = self.conn.isInRecord('cityinfo', data)
             if result:
                 continue
             else:
                 data.update(city_id=location_id[i], city_name=location_city[i].decode('unicode-escape'),
                             city_url=location_url[i])
-                self.db.insert('cityinfo', data)
+                self.conn.insert('cityinfo', data)
 
         location_dic = dict(zip(location_id, location_url))
 
@@ -77,11 +75,10 @@ class YouXin():
             car_url_list = []
             car_content = []
 
-            # index_soup = BeautifulSoup(requests.get(url).content, "html.parser")
-            driver = self.driver
-            driver.get(url)
-
-            index_soup = BeautifulSoup(driver.page_source, "html.parser")
+            index_soup = BeautifulSoup(requests.get(url).content, "html.parser")
+            # driver = self.driver
+            # driver.get(url)
+            # index_soup = BeautifulSoup(driver.page_source, "html.parser")
 
             # 寻找是否有下一页，如果有则递归抓取
             next_page = self.getNextPage(index_soup)
@@ -101,7 +98,7 @@ class YouXin():
 
             city_id = filter(str.isdigit, re.findall("cityid=\"\d*\"", str(car_content[0]))[0])
             car_dic = dict(zip(car_id_list, car_url_list))
-            print car_dic
+            # print car_dic
 
             self.getDetailPage(car_dic, city_id)
 
@@ -117,75 +114,78 @@ class YouXin():
             return None
 
     def getDetailPage(self, car_dic, city_id):
-        wm = common.WorkManager(self.NUM_OF_THREADS)
-
+        # 初始化多线程
+        pool = common.ThreadPool(30)
         try:
             for car_id, car_url in car_dic.iteritems():
                 # 抓去前检查是否已入库
                 data = dict()
                 data.update(car_id=car_id)
-                result = self.db.isInRecord('carsummer', data)
+                result = self.conn.isInRecord('carsummer', data)
 
                 if result:
                     print car_id + " is exist."
                     continue
                 else:
                     print car_url
-
                     # 多线程抓取详细页面
-                    wm.add_job(self.getCarInfo, car_id, car_url, city_id)
-            wm.start()
-            wm.wait_for_complete()
+                    pool.run(func=self.getCarInfo, args=(car_id, car_url, city_id))
+            pool.terminate()
 
+            # 等待
+            # self.tools.sleep()
         except Exception as e:
             print "DetailPage: " + str(e)
 
     def getCarInfo(self, car_id, car_url, city_id):
-        #多线程单独申请资源
-        driver = webdriver.PhantomJS(executable_path="C:\\Program Files (x86)\\Phantomjs\\bin\\phantomjs.exe")
         conn = db.DBHandler(
             {'host': 'localhost', 'port': 3306, 'user': 'root', 'passwd': '', 'db': 'youxin', 'charset': 'utf8'})
+        try:
+            # driver = self.driver
+            # driver = webdriver.PhantomJS(executable_path="C:\\Program Files (x86)\\Phantomjs\\bin\\phantomjs.exe")
 
-        # 提取车辆信息
-        driver.get(car_url)
-        car_soup = BeautifulSoup(driver.page_source, "html.parser")
-        car_brand = car_soup.select('.cd_m_h ')
-        car_title = car_brand[0].get_text().replace('\n', '')
+            # 提取车辆信息
+            # driver.get(car_url)
+            # car_soup = BeautifulSoup(driver.page_source, "html.parser")
+            car_soup = BeautifulSoup(requests.get(car_url).content, "html.parser")
+            car_brand = car_soup.select('.cd_m_h ')
+            car_title = car_brand[0].get_text().replace('\n', '')
 
-        car_price = car_soup.select('.cd_m_info b')
-        full_price = car_price[0].get_text().replace(u'万', '').replace(u'￥', '')
-        if len(car_price) == 2:
-            is_FYB = 1
-        else:
-            is_FYB = 0
+            car_price = car_soup.select('.cd_m_info b')
+            full_price = car_price[0].get_text().replace(u'万', '').replace(u'￥', '')
+            if len(car_price) == 2:
+                is_FYB = 1
+            else:
+                is_FYB = 0
 
-        car_info = car_soup.select('.cd_m_info_desc span')
-        license_date = car_info[2].get_text() + '-01'
-        sale_date = car_info[4].get_text()
-        meters = car_info[0].get_text().replace(u'万公里', '')
-        meters = self.tools.format(meters)
-        displacement = car_info[6].get_text()
-        effluent = car_info[8].get_text()
+            car_info = car_soup.select('.cd_m_info_desc span')
+            license_date = car_info[2].get_text() + '-01'
+            sale_date = car_info[4].get_text()
+            meters = car_info[0].get_text().replace(u'万公里', '')
+            meters = self.tools.format(meters)
+            displacement = car_info[6].get_text()
+            effluent = car_info[8].get_text()
 
-        if car_soup.select('.cd_m_info_cover_ys'):
-            is_onsale = 0
-        else:
-            is_onsale = 1
+            if car_soup.select('.cd_m_info_cover_ys'):
+                is_onsale = 0
+            else:
+                is_onsale = 1
 
-        # 组装车辆信息
-        data = dict()
-        data.update(car_id=car_id, car_title=car_title, license_date=license_date, sale_date=sale_date,
-                    displacement=displacement, is_FYB=is_FYB, effluent=effluent, meters=meters,
-                    full_price=full_price, city_id=city_id, is_onsale=is_onsale)
+            # 组装车辆信息
+            data = dict()
+            data.update(car_id=car_id, car_title=car_title, license_date=license_date, sale_date=sale_date,
+                        displacement=displacement, is_FYB=is_FYB, effluent=effluent, meters=meters,
+                        full_price=full_price, city_id=city_id, is_onsale=is_onsale)
+            insert_id = conn.insert('carsummer', data)
+            print "Insert id: " + str(insert_id)
 
-        print data
-        conn.insert('carsummer', data)
+        except Exception as e:
+            print "getCarInfo: " + str(e)
 
-        #关闭浏览器和关闭数据库连接
-        driver.quit()
-        conn.close()
 
 if __name__ == '__main__':
     test = YouXin()
     a = test.getLocation("http://m.xin.com/location/index/beijing/")
     test.cityIndexPage(a)
+
+    print "All done."
