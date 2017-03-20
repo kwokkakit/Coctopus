@@ -19,7 +19,7 @@ class YouXin():
             {'host': 'localhost', 'port': 3306, 'user': 'root', 'passwd': '', 'db': 'youxin', 'charset': 'utf8'})
 
         # 初始化基础工具
-        self.tools = common.BaseFunction()
+        self.tools = common.Tools()
 
         # 初始化公共变量
         self.BASE_URL = "http://www.xin.com"
