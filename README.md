@@ -12,3 +12,6 @@ The guy is so lazy that he left nothing.
 
 ## V 0.0.3
 新增多线程版本
+
+## V 0.0.4
+添加SQL文件
