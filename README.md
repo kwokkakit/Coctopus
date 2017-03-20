@@ -18,3 +18,6 @@ The guy is so lazy that he left nothing.
 
 ## V 0.4.0
 更新多线程库及更新多线程爬虫实现方式
+
+## V 0.5.0
+新增按品牌抓取方式
