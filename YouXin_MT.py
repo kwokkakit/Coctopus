@@ -15,59 +15,105 @@ class YouXin():
         # 使用PhantomJS获取渲染后页面
         self.driver = webdriver.PhantomJS(executable_path="C:\\Program Files (x86)\\Phantomjs\\bin\\phantomjs.exe")
 
-        # 初始化公共变量
-        self.BASE_URL = "http://www.xin.com"
-
         # 初始化数据库连接
         self.conn = db.DBHandler(
             {'host': 'localhost', 'port': 3306, 'user': 'root', 'passwd': '', 'db': 'youxin', 'charset': 'utf8'})
 
-        # 初始化工具
+        # 初始化基础工具
         self.tools = common.Tools()
 
-    def getLocation(self, locatoin_page):
+        # 初始化公共变量
+        self.BASE_URL = "http://www.xin.com"
+
+        # 抓取方式
+        # FLAG = 1: 按照城市循环抓
+        # FLAG = 2: 按照城市+品牌循环抓
+        self.FLAG = 2
+
+    def getByLocation(self, index_page):
+        city_url_list = []
         try:
             driver = self.driver
-            driver.get(locatoin_page)
+            driver.get(index_page)
 
             # 提取页面中的城市
             location_soup = BeautifulSoup(driver.page_source, "lxml")
             location_content = location_soup.find_all("div", class_='ci_m_city ci_m_list')
-            location_url = re.findall("<a\scityid=\"\d*\"\shref=\"/(.*?)/\">*", str(location_content))
-            location_city = re.findall("<a\s*cityid\s*=\s*\"[0-9]*\"\shref=['\"]/\w*/['\"]>(.*?)</a>*",
-                                       str(location_content))
-            location_id = re.findall("cityid=\"\d*\"\shref", str(location_content))
+            cities = re.findall("<a\s*cityid=\"(.*?)\"\shref=['\"](.*?)['\"]>(.*?)</a>*", str(location_content))
+
+            # location_id = re.findall("cityid=\"\d*\"\shref", str(location_content))
+            # location_url = re.findall("<a\scityid=\"\d*\"\shref=\"/(.*?)/\">*", str(location_content))
+            # location_city = re.findall("<a\s*cityid\s*=\s*\"[0-9]*\"\shref=['\"]/\w*/['\"]>(.*?)</a>*",
+            #                            str(location_content))
+
+            for city_link in cities:
+                city_id = city_link[0]
+                city_url = city_link[1]
+                city_name = city_link[2]
+
+                # 组装城市URL列表
+                city_url_list.append(city_url)
+
+                # 组装城市记录入库
+                tablename = 'cityinfo'
+                data = dict()
+                data.update(city_id=city_id)
+                result = self.db.isInRecord(tablename, data)
+                if result:
+                    continue
+                else:
+                    data.update(city_id=city_id, city_name=city_name.decode('unicode-escape'),
+                                city_url=city_url)
+                    self.db.insert(tablename, data)
+
+            return city_url_list
         except Exception as e:
             print "Location" + str(e)
 
-        # 拼接URL
-        for _key, _value in enumerate(location_url):
-            location_url[_key] = self.BASE_URL + '/' + _value + '/s/'
+    def getByBrand(self, index_page):
+        brand_url_list = []
+        try:
+            driver = self.driver
+            driver.get(index_page)
+            brand_soup = BeautifulSoup(driver.page_source, "lxml")
+            brand_content = brand_soup.find_all("a", class_=" preventdefault")
+            brand_link = re.findall("<a.*?data-valueid=\"(.*?)\"\shref=\"/\w+(.*?)\"\srel=\"(.*?)\">(.*?)</a>*",
+                                    str(brand_content))
 
-        # 提取城市ID
-        for _key, _value in enumerate(location_id):
-            location_id[_key] = re.findall("\d+", _value, re.M)[0]
+            for v in brand_link:
+                brand_id = v[0]
+                brand_url = v[1]
+                brand_name = v[3]
 
-        # 组装城市记录入库
-        for i in range(len(location_id)):
-            data = dict()
-            data.update(city_id=location_id[i])
-            result = self.conn.isInRecord('cityinfo', data)
-            if result:
-                continue
-            else:
-                data.update(city_id=location_id[i], city_name=location_city[i].decode('unicode-escape'),
-                            city_url=location_url[i])
-                self.conn.insert('cityinfo', data)
+                # 组装品牌URL列表
+                brand_url_list.append(brand_url)
 
-        location_dic = dict(zip(location_id, location_url))
+                # 组装品牌记录入库
+                tablename = 'brandinfo'
+                data = dict()
+                data.update(brand_id=brand_id)
+                result = self.db.isInRecord(tablename, data)
+                if result:
+                    continue
+                else:
+                    data.update(brand_id=brand_id, brand_name=brand_name.decode('unicode-escape'), brand_url=brand_url)
+                    self.db.insert(tablename, data)
 
-        return location_dic
+            return brand_url_list
+        except Exception as e:
+            print "getBrand: " + str(e)
 
-    def cityIndexPage(self, location_dic):
-        # 循环所有城市
-        for k, v in location_dic.iteritems():
-            self.getIndexPage(v)
+    def loopIndexPage(self, city_url_list, brand_url_list):
+        # 循环所有页面组合
+        if self.FLAG == 1:
+            for city in city_url_list:
+                self.getIndexPage(self.BASE_URL + city + "s/")
+        elif self.FLAG == 2:
+            for city in city_url_list:
+                for brand in brand_url_list:
+                    self.getIndexPage(self.BASE_URL + city + brand)
+        else:
+            print "Error."
 
     def getIndexPage(self, url):
         try:
@@ -184,8 +230,9 @@ class YouXin():
 
 
 if __name__ == '__main__':
-    test = YouXin()
-    a = test.getLocation("http://m.xin.com/location/index/beijing/")
-    test.cityIndexPage(a)
+    spider = YouXin()
+    city_url_list = spider.getByLocation("http://m.xin.com/location/index/quanguo/")
+    brand_url_list = spider.getByBrand("http://www.xin.com/quanguo/s/")
+    spider.loopIndexPage(city_url_list, brand_url_list)
 
     print "All done."
