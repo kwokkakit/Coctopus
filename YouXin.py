@@ -7,13 +7,21 @@ import re
 import requests
 import logging
 
+import spider
 import db, common
 
+# TODO: 增加每日新增车辆的统计
+# TODO: 增加日志的输出
+# TODO: 优化车标题的存储，按品牌、型号、拆分数据入库
+# TODO: 增加车辆如果是付一半，理财产品的抓取，可以得到总车价
+# TODO; 修复判断车辆已卖出后的BUG
 
-class YouXin():
+class YouXin(spider.Spider):
     def __init__(self):
         # 使用PhantomJS获取渲染后页面
-        self.driver = webdriver.PhantomJS(executable_path="C:\\Program Files (x86)\\Phantomjs\\bin\\phantomjs.exe")
+        self.PHANTOMJS_PATH = "C:\\Program Files (x86)\\Phantomjs\\bin\\phantomjs.exe" # Windows
+        # self.PHANTOMJS_PATH = "/home/kitguo/Tools/Phantomjs/bin/phantomjs"  # Linux
+        self.driver = webdriver.PhantomJS(executable_path=self.PHANTOMJS_PATH)
 
         # 初始化数据库连接
         self.conn = db.DBHandler(
@@ -30,21 +38,21 @@ class YouXin():
         # FLAG = 2: 按照城市+品牌循环抓
         self.FLAG = 2
 
-    def getByLocation(self, index_page):
+    def getCity(self, index_page):
         city_url_list = []
         try:
             driver = self.driver
             driver.get(index_page)
 
             # 提取页面中的城市
-            location_soup = BeautifulSoup(driver.page_source, "lxml")
-            location_content = location_soup.find_all("div", class_='ci_m_city ci_m_list')
-            cities = re.findall("<a\s*cityid=\"(.*?)\"\shref=['\"](.*?)['\"]>(.*?)</a>*", str(location_content))
+            city_soup = BeautifulSoup(driver.page_source, "lxml")
+            city_content = city_soup.find_all("div", class_='ci_m_city ci_m_list')
+            cities = re.findall("<a\s*cityid=\"(.*?)\"\shref=['\"](.*?)['\"]>(.*?)</a>*", str(city_content))
 
-            # location_id = re.findall("cityid=\"\d*\"\shref", str(location_content))
-            # location_url = re.findall("<a\scityid=\"\d*\"\shref=\"/(.*?)/\">*", str(location_content))
+            # location_id = re.findall("cityid=\"\d*\"\shref", str(city_content))
+            # location_url = re.findall("<a\scityid=\"\d*\"\shref=\"/(.*?)/\">*", str(city_content))
             # location_city = re.findall("<a\s*cityid\s*=\s*\"[0-9]*\"\shref=['\"]/\w*/['\"]>(.*?)</a>*",
-            #                            str(location_content))
+            #                            str(city_content))
 
             for city_link in cities:
                 city_id = city_link[0]
@@ -70,7 +78,7 @@ class YouXin():
         except Exception as e:
             print "Location" + str(e)
 
-    def getByBrand(self, index_page):
+    def getBrand(self, index_page):
         brand_url_list = []
         try:
             driver = self.driver
@@ -102,6 +110,10 @@ class YouXin():
             return brand_url_list
         except Exception as e:
             print "getBrand: " + str(e)
+
+    def getModel(self):
+        pass
+        # TODO: 实现获取车辆品牌下的所有型号
 
     def loopIndexPage(self, city_url_list, brand_url_list):
         # 循环所有页面组合
@@ -216,7 +228,7 @@ class YouXin():
 
 if __name__ == '__main__':
     spider = YouXin()
-    city_url_list = spider.getByLocation("http://m.xin.com/location/index/quanguo/")
-    brand_url_list = spider.getByBrand("http://www.xin.com/quanguo/s/")
+    city_url_list = spider.getCity("http://m.xin.com/location/index/quanguo/")
+    brand_url_list = spider.getBrand("http://www.xin.com/quanguo/s/")
     spider.loopIndexPage(city_url_list, brand_url_list)
 
