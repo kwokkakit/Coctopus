@@ -1,19 +1,21 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
 
+import re
+import os
+
+import requests
 from bs4 import BeautifulSoup
 from selenium import webdriver
-import re
-import requests
-import logging
 
-import db, common
+import common
+import db
 
 
 class YouXin():
     def __init__(self):
         # 使用PhantomJS获取渲染后页面
-        self.driver = webdriver.PhantomJS(executable_path="C:\\Program Files (x86)\\Phantomjs\\bin\\phantomjs.exe")
+        self.driver = webdriver.PhantomJS(executable_path=os.getcwd() + "\\resource\\Phantomjs\\bin\\phantomjs.exe")
 
         # 初始化数据库连接
         self.conn = db.DBHandler(

@@ -1,14 +1,19 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
 
+import ConfigParser
+import re
+import os
+
+import requests
 from bs4 import BeautifulSoup
 from selenium import webdriver
-import re
-import requests
-import logging
+from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
 
+import common
+import db
 import spider
-import db, common
+
 
 # TODO: 增加每日新增车辆的统计
 # TODO: 增加日志的输出
@@ -16,16 +21,20 @@ import db, common
 # TODO: 增加车辆如果是付一半，理财产品的抓取，可以得到总车价
 # TODO; 修复判断车辆已卖出后的BUG
 
+
 class YouXin(spider.Spider):
-    def __init__(self):
+    def __init__(self, db_conf, phantomjs):
         # 使用PhantomJS获取渲染后页面
-        self.PHANTOMJS_PATH = "C:\\Program Files (x86)\\Phantomjs\\bin\\phantomjs.exe" # Windows
-        # self.PHANTOMJS_PATH = "/home/kitguo/Tools/Phantomjs/bin/phantomjs"  # Linux
-        self.driver = webdriver.PhantomJS(executable_path=self.PHANTOMJS_PATH)
+        self.PHANTOMJS_PATH = phantomjs
+        dcap = dict(DesiredCapabilities.PHANTOMJS)
+        dcap["phantomjs.page.settings.userAgent"] = (
+            "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/53.0.2785.104 Safari/537.36 Core/1.53.2372.400 QQBrowser/9.5.10548.400")
+        self.driver = webdriver.PhantomJS(executable_path=self.PHANTOMJS_PATH, desired_capabilities=dcap)
 
         # 初始化数据库连接
         self.conn = db.DBHandler(
-            {'host': 'localhost', 'port': 3306, 'user': 'root', 'passwd': '', 'db': 'youxin', 'charset': 'utf8'})
+            {'host': db_conf.get('hostname'), 'port': int(db_conf.get('port')), 'user': db_conf.get('username'),
+             'passwd': db_conf.get('passwd'), 'db': db_conf.get('database'), 'charset': db_conf.get('charset')})
 
         # 初始化基础工具
         self.tools = common.Tools()
@@ -34,15 +43,16 @@ class YouXin(spider.Spider):
         self.BASE_URL = "http://www.xin.com"
 
         # 抓取方式
-        # FLAG = 1: 按照城市循环抓
-        # FLAG = 2: 按照城市+品牌循环抓
-        self.FLAG = 2
+        # FLAG = 1: 城市抓取
+        # FLAG = 2: 城市+品牌抓取
+        # FLAG = 3: 城市+品牌+型号抓取
+        self.FLAG = 3
 
-    def getCity(self, index_page):
+    def getCity(self, url):
         city_url_list = []
         try:
             driver = self.driver
-            driver.get(index_page)
+            driver.get(url)
 
             # 提取页面中的城市
             city_soup = BeautifulSoup(driver.page_source, "lxml")
@@ -78,17 +88,18 @@ class YouXin(spider.Spider):
         except Exception as e:
             print "Location" + str(e)
 
-    def getBrand(self, index_page):
+    def getBrand(self, url):
         brand_url_list = []
         try:
-            driver = self.driver
-            driver.get(index_page)
-            brand_soup = BeautifulSoup(driver.page_source, "lxml")
+            # driver = self.driver
+            # driver.get(index_page)
+            # brand_soup = BeautifulSoup(driver.page_source, "lxml")
+            brand_soup = BeautifulSoup(requests.get(url).content, "html.parser")
             brand_content = brand_soup.find_all("a", class_=" preventdefault")
-            brand_link = re.findall("<a.*?data-valueid=\"(.*?)\"\shref=\"/\w+(.*?)\"\srel=\"(.*?)\">(.*?)</a>*",
+            brands = re.findall("<a.*?data-valueid=\"(.*?)\"\shref=\"/\w+(.*?)\"\srel=\"(.*?)\">(.*?)</a>*",
                                     str(brand_content))
 
-            for v in brand_link:
+            for v in brands:
                 brand_id = v[0]
                 brand_url = v[1]
                 brand_name = v[3]
@@ -111,11 +122,39 @@ class YouXin(spider.Spider):
         except Exception as e:
             print "getBrand: " + str(e)
 
-    def getModel(self):
-        pass
+    def getModel(self, url):
         # TODO: 实现获取车辆品牌下的所有型号
+        model_url_list = []
+        model_soup = BeautifulSoup(requests.get(url).content, "html.parser")
+        model_content = model_soup.find_all("a", class_="search_search_click preventdefault")
+        models = re.findall("<a.*?data-valueid=\"(.*?)\"\shref=\"/\w+(.*?)\"\stitle=\"(.*?)\">(.*?)</a>", str(model_content))
+
+        for v in models:
+            model_id = v[0]
+            model_url = v[1]
+            model_name = v[3]
+
+            # 组装型号URL列表
+            model_url_list.append(model_url)
+
+            # 组装品牌记录入库
+            tablename = 'modelinfo'
+            data = dict()
+            data.update(model_id=model_id)
+            result = self.conn.isInRecord(tablename, data)
+            if result:
+                continue
+            else:
+                data.update(model_id=model_id, model_name=model_name.decode('unicode-escape'), model_url=model_url)
+                self.conn.insert(tablename, data)
+
+        return model_url_list
+
+        print model_url
+
 
     def loopIndexPage(self, city_url_list, brand_url_list):
+        model_url_list = []
         # 循环所有页面组合
         if self.FLAG == 1:
             for city in city_url_list:
@@ -124,9 +163,17 @@ class YouXin(spider.Spider):
             for city in city_url_list:
                 for brand in brand_url_list:
                     self.getIndexPage(self.BASE_URL + city + brand)
+        elif self.FLAG == 3:
+            for city in city_url_list:
+                for brand in brand_url_list:
+                    model_url_list.append(self.getModel(self.BASE_URL + city + brand))
+                break
+
+            for model_url in model_url_list:
+                for url in model_url:
+                    self.getIndexPage(self.BASE_URL + city + url)
         else:
             print "Error."
-
 
     def getIndexPage(self, url):
         try:
@@ -145,20 +192,25 @@ class YouXin(spider.Spider):
                 self.getIndexPage(next_page)
 
             print "current URL: " + url
-            car_summer_list = index_soup.find_all("li", class_="con ")
-            for car_summer in car_summer_list:
-                # 获取当前页面所有车辆URL
-                car_content = car_summer.select("h2 > a")
-                if not car_content:
-                    car_content = car_summer.select(".aimg")
+            is_empty = index_soup.find_all("div", class_="err-show change-top")
 
-                car_id_list.append(filter(str.isdigit, re.findall("carid=\"\d*\"", str(car_content[0]))[0]))
-                car_url_list.append(self.BASE_URL + re.findall("/\D*\d*.html", str(car_content[0]))[0])
+            if is_empty:
+                print "No car in the page."
+            else:
+                car_summer_list = index_soup.find_all("li", class_="con ")
+                for car_summer in car_summer_list:
+                    # 获取当前页面所有车辆URL
+                    car_content = car_summer.select("h2 > a")
+                    if not car_content:
+                        car_content = car_summer.select(".aimg")
 
-            city_id = filter(str.isdigit, re.findall("cityid=\"\d*\"", str(car_content[0]))[0])
-            car_dic = dict(zip(car_id_list, car_url_list))
-            print car_dic
-            self.getDetailPage(car_dic, city_id)
+                    car_id_list.append(filter(str.isdigit, re.findall("carid=\"\d*\"", str(car_content[0]))[0]))
+                    car_url_list.append(self.BASE_URL + re.findall("/\D*\d*.html", str(car_content[0]))[0])
+
+                city_id = filter(str.isdigit, re.findall("cityid=\"\d*\"", str(car_content[0]))[0])
+                car_dic = dict(zip(car_id_list, car_url_list))
+                print car_dic
+                self.getDetailPage(car_dic, city_id)
 
         except Exception as e:
             print "getIndexPage: " + str(e)
@@ -227,8 +279,20 @@ class YouXin(spider.Spider):
 
 
 if __name__ == '__main__':
-    spider = YouXin()
-    city_url_list = spider.getCity("http://m.xin.com/location/index/quanguo/")
-    brand_url_list = spider.getBrand("http://www.xin.com/quanguo/s/")
-    spider.loopIndexPage(city_url_list, brand_url_list)
+    cp = ConfigParser.ConfigParser()
+    cp.read(os.getcwd() + "\\resource\\spider.conf")
 
+    # TODO: 配置文件读取初始URL及数据库连接等
+    # 初始化配置
+    db_conf = cp.items('db')
+    db_conf = dict(db_conf)
+    phantomjs = cp.get('phantomjs', 'windows')
+    city_url = cp.get('url', 'city_url')
+    brand_url = cp.get('url', 'brand_url')
+    model_url = cp.get('url', 'model_url')
+
+    spider = YouXin(db_conf, phantomjs)
+
+    city_url_list = spider.getCity(city_url)
+    brand_url_list = spider.getBrand(brand_url)
+    spider.loopIndexPage(city_url_list, brand_url_list)
